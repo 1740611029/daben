@@ -1,0 +1,27 @@
+.el-table__cell {
+  padding: 5px 0 !important;
+}
+.el-table .custom-row {
+  height: 43px;
+}
+.el-table .custom-row .cell {
+  padding: 0 5px;
+}
+.el-table .custom-row .cell .el-input__inner{
+  padding: 0 5px;
+}
+.el-table .title-class {
+  color: #67c23a;
+}
+.el-table .header-class {
+  background-color: #e8f4ff !important;
+  height: 23px !important;
+}
+.el-table .header-class .cell {
+  background-color: #e8f4ff;
+  height: 23px !important;
+}
+.el-table .changeDateCell {
+  background: #F56C6C !important;
+  color: #000;
+}

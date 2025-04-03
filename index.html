@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="./vue/vue@2.js"></script>
+    <link rel="stylesheet" href="./element/element.css">
+    <script src="./element/element.js"></script>
+    <link rel="stylesheet" href="./css/index.css">
+</head>
+
+<body>
+    <div id="app">
+        <div style="margin-bottom: 8px;">
+            <el-date-picker v-model="date" type="date" size="small" placeholder="选择日期" value-format="yyyy-MM-dd"
+                :clearable="false" @change="dateChange"></el-date-picker>
+            <el-button v-show="isEdit" size="small" @click="handleCancel">取消</el-button>
+            <el-button v-show="isEdit" type="success" size="small" @click="handleAdd">新增</el-button>
+            <el-button v-show="isEdit" type="primary" size="small" @click="handleSave">保存</el-button>
+            <el-button v-show="!isEdit" type="primary" size="small" @click="handleModify">修改</el-button>
+            下班倒计时：{{ offWorkTime }}
+        </div>
+        <div class="tableWrap" v-for="(item, index) in tableList" :key="item.title">
+            <!-- <el-alert :title="item.title" type="success" :closable="false"></el-alert> -->
+            <el-table :data="item.rows" border row-class-name="custom-row" style="margin-bottom: 20px;width: fit-content;"
+                header-cell-class-name="header-class" :cell-class-name="(e) => cellCLassName(e, index)" @cell-dblclick="(...args) => cellDbClick(args, index)">
+                <el-table-column type="index" width="70px" fixed="left" :label="item.title" :prop="item.title"
+                    label-class-name="title-class">
+                    <template slot-scope="scope">
+                        <span>{{ scope.row.name }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column v-for="(col, index) in colNum" :key="index" :label="col" width="80px" :prop="col" show-overflow-tooltip>
+                    <template slot-scope="scope">
+                        <el-input v-if="isEdit" v-model="scope.row[index]" size="small"></el-input>
+                        <span v-else>{{ scope.row[index] }}</span>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </div>
+    </div>
+    <script>
+        // 封装浏览器本地数据库操作
+        class IndexedDBHelper {
+            constructor(dbName = "JJY") {
+                let _version = localStorage.getItem("_version") || 1;
+                localStorage.setItem("_version", ++_version)
+                // 版本大于9999，则重新开始，以免数据库版本过高出现问题
+                // if (_version > 9999) {
+                //     _version = 1
+                //     localStorage.setItem("_version", 1)
+                // }
+                this.dbName = dbName;
+                this.dbVersion = _version;
+                this.db = null;
+                this.date = ""
+            }
+
+            // 打开或创建数据库
+            openDB(date) {
+                this.date = date
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(this.dbName, this.dbVersion);
+                    // 当数据库版本升级时触发
+                    request.onupgradeneeded = (event) => {
+                        // 获取数据库对象
+                        this.db = event.target.result;
+                        if (!this.db.objectStoreNames.contains(this.date)) {
+                            const objectStore = this.db.createObjectStore(this.date, { keyPath: 'id' });
+                            objectStore.createIndex('dateIndex', 'date', { unique: false });
+                        }
+                    };
+                    request.onsuccess = (event) => {
+                        this.db = event.target.result;
+                        resolve()
+                    };
+                    request.onerror = (event) => {
+                        reject(event)
+                    };
+                })
+            }
+
+            // 根据表名读取所有数据
+            getAllData(storeName) {
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([storeName], 'readonly');
+                    const store = transaction.objectStore(storeName);
+                    // 获取所有数据
+                    const request = store.getAll();
+                    request.onsuccess = (event) => {
+                        const data = event.target.result;
+                        resolve(data);
+                    };
+                    request.onerror = (event) => {
+                        reject(event);
+                    };
+                });
+            }
+
+            // 覆盖某个表的所有数据
+            overwriteAllData(storeName, newData) {
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([storeName], 'readwrite');
+                    const store = transaction.objectStore(storeName);
+                    const clearRequest = store.clear();
+                    clearRequest.onsuccess = () => {
+                        // 添加新数据
+                        const promiseList = []
+                        newData.forEach((item, index) => {
+                            const addRequest = store.add({ ...item, id: index });
+                            promiseList.push(new Promise((resolve, reject) => {
+                                addRequest.onsuccess = () => {
+                                    resolve();
+                                };
+                                addRequest.onerror = (event) => {
+                                    reject(event);
+                                };
+                            }))
+                        });
+                        Promise.all(promiseList).then(() => {
+                            resolve();
+                        }).catch((error) => {
+                            this.$message.error('覆盖写入数据报错了，快点联系聪明居');
+                            console.log("覆盖写入数据报错了", error);
+                            reject();
+                        })
+                    };
+                    clearRequest.onerror = (event) => {
+                        this.$message.error('清空数据报错了，快点联系聪明居');
+                        console.log("清空数据报错了", error);
+                        reject();
+                    };
+                });
+            }
+        }
+
+        class Rows {
+            constructor() {
+                this.rows = [
+                    { name: "合同" },
+                    { name: "代扣" },
+                    { name: "福汽租" },
+                ];
+            }
+        }
+    </script>
+    <script>
+
+        new Vue({
+            el: '#app',
+            data() {
+                return {
+                    loadingRef: null,
+                    date: new Date(),
+                    colNum: 4,
+                    rows: [],
+                    isEdit: false,
+                    tableList: [
+                        { title: "佛山", rows: new Rows().rows, changeDateList: {} },
+                        { title: "珠海", rows: new Rows().rows, changeDateList: {} },
+                        { title: "惠州", rows: new Rows().rows, changeDateList: {} },
+                        { title: "深圳", rows: new Rows().rows, changeDateList: {} },
+                    ],
+                    backupTableList: [], // 备份
+                    backupColNum: 4,
+                    dbHelper: null,
+                    offWorkTime: "",
+                    timeId: null
+                };
+            },
+            async created() {
+                setInterval(() => {
+                    this.offWorkTime = this.calculateCountdown();
+                }, 1000);
+                this.date = this.formatDate(this.date);
+                await this.initConfig()
+            },
+            methods: {
+                /**
+                 * 初始化配置
+                 */
+                async initConfig() {
+                    this.loadingRef = this.$loading({
+                        lock: true,
+                        text: '加载中',
+                        spinner: 'el-icon-loading',
+                        background: 'rgba(0, 0, 0, 0.7)'
+                    });
+                    try {
+                        this.dbHelper = new IndexedDBHelper();
+                        await this.dbHelper.openDB(this.date);
+                        const res = await this.dbHelper.getAllData(this.date)
+                        console.log(res);
+
+                        if (res.length > 0) {
+                            this.colNum = Object.keys(res[0]?.rows[0]).length - 1
+                            this.tableList = res
+                        } else {
+                            this.tableList = this.$options.data().tableList
+                            this.addCol(this.colNum - 1)
+                            this.colNum = 4
+                        }
+                    } catch (error) {
+                        this.$message.error('初始化报错了，快点联系聪明居');
+                        console.log("初始化报错", error);
+                    } finally {
+                        this.loadingRef.close();
+                    }
+                },
+                dateChange() {
+                    this.initConfig()
+                },
+                cellDbClick(e,  index) {
+                    const field = e[1].property - 1
+                    if (isNaN(field)) return
+                    const rowName = e[0].name
+                    if (!this.tableList[index].changeDateList) {
+                        this.$set(this.tableList[index], "changeDateList", {})
+                    }
+                    const _item = this.tableList[index].changeDateList
+                    console.log(e);
+                    
+                    const obj = _item[rowName] || {}
+                    this.$set(_item, rowName, { ...obj, [field]: !obj[field] })
+                    this.handleSave()
+                },
+                cellCLassName({ row, column }, index) {
+                    return (this.tableList[index].changeDateList || {})?.[row.name]?.[column.property - 1] ? "changeDateCell" : ""
+                },
+                /**
+                 * 新增列
+                 * @param {*} length 指定新增多少列 
+                 */
+                addCol(length) {
+                    const res = {}
+                    const _len = Object.keys(this.tableList[0]?.rows[0]).length
+                    for (let i = 0; i < length; i++) {
+                        res[_len + i] = ""
+                    }
+                    this.tableList.forEach(t => {
+                        const rows = t.rows
+                        for (let i = 0; i < rows.length; i++) {
+                            this.$set(rows, i, { ...rows[i], ...res })
+                        }
+                    });
+                },
+                handleAdd() {
+                    this.colNum++
+                    this.addCol(1)
+                    console.log("handleAdd", JSON.parse(JSON.stringify(this.tableList)));
+                },
+                handleModify() {
+                    this.isEdit = true;
+                    // 备份当前数据
+                    this.backupColNum = this.colNum;
+                    this.backupTableList = JSON.parse(JSON.stringify(this.tableList));
+                },
+                async handleSave() {
+                    this.isEdit = false;
+                    console.log("handleSave", JSON.parse(JSON.stringify(this.tableList)));
+
+                    await this.dbHelper.overwriteAllData(this.date, this.tableList)
+                },
+                handleCancel() {
+                    // 取消编辑并还原数据
+                    this.isEdit = false;
+                    this.colNum = this.backupColNum;
+                    this.tableList.forEach(item => {
+                        const tag = this.backupTableList.find(backupItem => backupItem.title === item.title);
+                        item.rows = tag.rows;
+                    })
+                },
+                formatDate(date) {
+                    const year = date.getFullYear();
+                    let month = date.getMonth() + 1;
+                    let day = date.getDate();
+                    month = month < 10 ? '0' + month : month;
+                    day = day < 10 ? '0' + day : day;
+                    return `${year}-${month}-${day}`;
+                },
+                calculateCountdown() {
+                    const now = new Date();
+                    const endTime = new Date(now);
+                    endTime.setHours(18, 0, 0, 0);
+                    if (now >= endTime) {
+                        return "到点下班啦";
+                    }
+                    const timeDiff = endTime - now;
+                    const hours = Math.floor(timeDiff / (1000 * 60 * 60));
+                    const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+                    const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
+                    const formatTime = (value) => value < 10 ? `0${value}` : value;
+                    return `${formatTime(hours)}:${formatTime(minutes)}:${formatTime(seconds)}`;
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

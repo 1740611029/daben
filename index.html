@@ -20,21 +20,29 @@
             <el-button v-show="isEdit" type="primary" size="small" @click="handleSave">保存</el-button>
             <el-button v-show="!isEdit" type="primary" size="small" @click="handleModify">修改</el-button>
             下班倒计时：{{ offWorkTime }}
+            <el-switch v-model="clickTag" active-color="#13ce66" style="margin-left: 8px;">
+            </el-switch>
         </div>
         <div class="tableWrap" v-for="(item, index) in tableList" :key="item.title">
             <!-- <el-alert :title="item.title" type="success" :closable="false"></el-alert> -->
-            <el-table :data="item.rows" border row-class-name="custom-row" style="margin-bottom: 20px;width: fit-content;"
-                header-cell-class-name="header-class" :cell-class-name="(e) => cellCLassName(e, index)" @cell-dblclick="(...args) => cellDbClick(args, index)">
+            <el-table :data="item.rows" border row-class-name="custom-row"
+                style="margin-bottom: 20px;width: fit-content;" header-cell-class-name="header-class"
+                :cell-class-name="(e) => cellCLassName(e, index)" @cell-dblclick="(...args) => handleCellDblclick(args, index)"
+                @cell-click="(...args) => handleCellClick(args, index)">
                 <el-table-column type="index" width="70px" fixed="left" :label="item.title" :prop="item.title"
                     label-class-name="title-class">
                     <template slot-scope="scope">
                         <span>{{ scope.row.name }}</span>
                     </template>
                 </el-table-column>
-                <el-table-column v-for="(col, index) in colNum" :key="index" :label="col" width="80px" :prop="col" show-overflow-tooltip>
+                <el-table-column v-for="(col, index) in colNum" :key="index" :label="col" width="80px" :prop="col"
+                    show-overflow-tooltip align="center">
                     <template slot-scope="scope">
-                        <el-input v-if="isEdit" v-model="scope.row[index]" size="small"></el-input>
-                        <span v-else>{{ scope.row[index] }}</span>
+                        <el-input v-if="isEdit && scope.row.name === '合同'" v-model="scope.row[index]"
+                            size="small"></el-input>
+                        <span v-else-if="scope.row.name === '合同'">{{scope.row[index]}}</span>
+                        <i class="el-icon-circle-check" style="color:#67C23A;font-size: 20px;"
+                            v-else-if="isFinish(item, scope.row, index)"></i>
                     </template>
                 </el-table-column>
             </el-table>
@@ -140,6 +148,7 @@
                 this.rows = [
                     { name: "合同" },
                     { name: "代扣" },
+                    { name: "花小猪" },
                     { name: "福汽租" },
                 ];
             }
@@ -157,16 +166,18 @@
                     rows: [],
                     isEdit: false,
                     tableList: [
-                        { title: "佛山", rows: new Rows().rows, changeDateList: {} },
-                        { title: "珠海", rows: new Rows().rows, changeDateList: {} },
-                        { title: "惠州", rows: new Rows().rows, changeDateList: {} },
-                        { title: "深圳", rows: new Rows().rows, changeDateList: {} },
+                        { title: "广州", rows: new Rows().rows, changeDateList: {}, finishList: {} },
+                        { title: "东莞", rows: new Rows().rows, changeDateList: {}, finishList: {} },
+                        { title: "长沙", rows: new Rows().rows, changeDateList: {}, finishList: {} },
                     ],
                     backupTableList: [], // 备份
                     backupColNum: 4,
                     dbHelper: null,
                     offWorkTime: "",
-                    timeId: null
+                    timeId: null,
+                    clickTag: false,
+                    clickTimer: null, // 单击存储定时器
+                    delay: 250       // 单击延迟时间（建议200ms-300ms）
                 };
             },
             async created() {
@@ -191,7 +202,7 @@
                         this.dbHelper = new IndexedDBHelper();
                         await this.dbHelper.openDB(this.date);
                         const res = await this.dbHelper.getAllData(this.date)
-                        console.log(res);
+                        // console.log(res);
 
                         if (res.length > 0) {
                             this.colNum = Object.keys(res[0]?.rows[0]).length - 1
@@ -208,10 +219,46 @@
                         this.loadingRef.close();
                     }
                 },
+                isFinish(tableItem, row, index) {
+                    return tableItem.finishList?.[row.name]?.[index] ?? false;
+                },
                 dateChange() {
                     this.initConfig()
                 },
-                cellDbClick(e,  index) {
+                // 单击事件处理
+                handleCellClick(e, index) {
+                    if (this.clickTimer) clearTimeout(this.clickTimer);
+                    // 设置新的定时器，延迟执行单击逻辑
+                    this.clickTimer = setTimeout(() => {
+                        this.cellClick(e, index)
+                        // 执行后重置定时器
+                        this.clickTimer = null;
+                    }, this.delay);
+                },
+                // 双击事件处理
+                handleCellDblclick(e, index) {
+                    // 清除单击事件的定时器（关键！）
+                    if (this.clickTimer) {
+                        clearTimeout(this.clickTimer);
+                        this.clickTimer = null;
+                    }
+                    this.cellDbClick(e, index)
+                },
+                cellClick(e, index) {
+                    if (!this.clickTag || this.isEdit) return
+                    const field = e[1].property - 1
+                    if (isNaN(field)) return
+                    const rowName = e[0].name
+                    if (!this.tableList[index].finishList) {
+                        this.$set(this.tableList[index], "finishList", {})
+                    }
+                    const _item = this.tableList[index].finishList
+                    const obj = _item[rowName] || {}
+                    this.$set(_item, rowName, { ...obj, [field]: !obj[field] })
+                    this.handleSave()
+                },
+                cellDbClick(e, index) {
+                    if (this.isEdit) return
                     const field = e[1].property - 1
                     if (isNaN(field)) return
                     const rowName = e[0].name
@@ -219,10 +266,9 @@
                         this.$set(this.tableList[index], "changeDateList", {})
                     }
                     const _item = this.tableList[index].changeDateList
-                    console.log(e);
-                    
                     const obj = _item[rowName] || {}
                     this.$set(_item, rowName, { ...obj, [field]: !obj[field] })
+                    // console.log(JSON.parse(JSON.stringify(this.tableList)));
                     this.handleSave()
                 },
                 cellCLassName({ row, column }, index) {
@@ -258,7 +304,7 @@
                 },
                 async handleSave() {
                     this.isEdit = false;
-                    console.log("handleSave", JSON.parse(JSON.stringify(this.tableList)));
+                    // console.log("handleSave", JSON.parse(JSON.stringify(this.tableList)));
 
                     await this.dbHelper.overwriteAllData(this.date, this.tableList)
                 },
